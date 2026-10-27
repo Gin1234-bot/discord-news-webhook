@@ -151,25 +151,32 @@ def fetch_all_news():
                 all_articles.append(it)
     return all_articles
 
-def load_seen():
+def load_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    return set(data)
+                    return {"seen": set(data), "banner_date": ""}
                 elif isinstance(data, dict):
-                    return set(data.get("seen", []))
+                    return {
+                        "seen": set(data.get("seen", [])),
+                        "banner_date": data.get("banner_date", "")
+                    }
         except Exception as e:
             print(f"[!] Lỗi đọc state: {e}")
-    return set()
+    return {"seen": set(), "banner_date": ""}
 
-def save_seen(seen_set):
+def save_state(state):
     try:
         # Giữ tối đa 500 link gần nhất để file luôn nhẹ
-        latest_500 = list(seen_set)[-500:]
+        latest_500 = list(state["seen"])[-500:]
+        payload = {
+            "banner_date": state.get("banner_date", ""),
+            "seen": latest_500
+        }
         with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(latest_500, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[!] Lỗi lưu state: {e}")
 
@@ -237,7 +244,9 @@ def send_discord(content, embeds):
     if not WEBHOOK:
         print("[!] Lỗi: Chưa cấu hình DISCORD_WEBHOOK!")
         return False
-    payload = {"content": content, "embeds": embeds}
+    payload = {"embeds": embeds}
+    if content:
+        payload["content"] = content
     r = requests.post(WEBHOOK, json=payload, timeout=20)
     r.raise_for_status()
     print("[+] Đã gửi tin tức thành công vào Discord!")
@@ -249,25 +258,22 @@ def main(mode="check"):
     date_str = now.strftime("%d/%m/%Y")
     time_str = now.strftime("%H:%M")
     ts = int(now.timestamp())
+    today = now.strftime("%Y-%m-%d")
 
     print(f"[*] Bắt đầu phiên quét tin tức thời sự [{mode}] lúc {time_str} ({thu}, {date_str})...")
 
     all_news = fetch_all_news()
     print(f"[*] Thu thập được {len(all_news)} tin tức mới nhất từ các nguồn báo chí.")
 
-    seen = load_seen()
+    state = load_state()
+    seen = state["seen"]
 
     if mode == "test":
         if all_news:
             sample = all_news[0]
-            content = (
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "🔴 **THỬ NGHIỆM HỆ THỐNG TIN TỨC THỜI SỰ 24H**\n"
-                f"⏰ *Phát sóng lúc: {time_str} ({thu}, {date_str})* • <t:{ts}:R>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            )
             embed = create_article_embed(sample, now)
-            send_discord(content, [embed])
+            # Theo yêu cầu: Chỉ gửi duy nhất card embed bài báo, không gửi kèm thanh banner ảnh 2
+            send_discord("", [embed])
         else:
             print("[!] Không có tin tức nào để test.")
         return
@@ -275,27 +281,22 @@ def main(mode="check"):
     if mode == "init":
         for a in all_news:
             seen.add(a["link"])
-        save_seen(seen)
+        state["banner_date"] = today
+        save_state(state)
         print(f"[+] Đã khởi tạo {len(seen)} tin tức cũ vào bộ nhớ. Hệ thống sẽ bắt đầu gửi tin MỚI từ lần quét sau.")
         return
 
     # Chế độ check
     if not seen:
-        # Lần đầu chạy chưa có file nhớ: lưu toàn bộ tin cũ, gửi 1 tin nóng nhất làm bài khai trương
         for a in all_news:
             seen.add(a["link"])
-        save_seen(seen)
+        state["banner_date"] = today
+        save_state(state)
         print(f"[+] Lần đầu khởi chạy: Đã nạp {len(seen)} tin tức vào bộ nhớ. Gửi 1 tin nóng nhất khai trương kênh...")
         if all_news:
             top_art = all_news[0]
-            content = (
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "🔴 **BẢN TIN THỜI SỰ NÓNG 24H • CHÍNH THỨC HOẠT ĐỘNG**\n"
-                f"⏰ *Cập nhật lúc: {time_str} ({thu}, {date_str})* • <t:{ts}:R>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            )
             embed = create_article_embed(top_art, now)
-            send_discord(content, [embed])
+            send_discord("", [embed])
         return
 
     # Tìm các bài báo mới tinh chưa từng gửi
@@ -303,25 +304,32 @@ def main(mode="check"):
 
     if new_articles:
         print(f"[!] PHÁT HIỆN {len(new_articles)} BÀI BÁO THỜI SỰ MỚI TINH! ĐĂNG TOÀN BỘ NGAY LẬP TỨC...")
-        # Đăng toàn bộ không giới hạn, chia thành các đợt tối đa 5 embeds/tin nhắn để không vượt trần ký tự Discord
+        need_daily_banner = (state.get("banner_date") != today)
+
         chunk_size = 5
-        for i in range(0, len(new_articles), chunk_size):
+        for idx, i in enumerate(range(0, len(new_articles), chunk_size)):
             batch = new_articles[i:i + chunk_size]
             embeds = [create_article_embed(a, now) for a in batch]
 
-            content = (
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔴 **BẢN TIN THỜI SỰ NÓNG 24H • CẬP NHẬT MỚI ({len(new_articles)} TIN)**\n"
-                f"⏰ *Ghi nhận lúc: {time_str} ({thu}, {date_str})* • <t:{ts}:R>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            ) if i == 0 else ""
+            # Trong cùng 1 ngày: KHÔNG gửi thêm banner (ảnh 2), chỉ gửi duy nhất card embed bài báo
+            # Chỉ gửi banner chào ngày mới duy nhất 1 lần vào bài đầu tiên của ngày mới
+            if need_daily_banner and idx == 0:
+                content = (
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔴 **BẢN TIN THỜI SỰ NÓNG 24H • {thu.upper()}, {date_str}**\n"
+                    f"⏰ *Bắt đầu ngày mới lúc: {time_str}* • <t:{ts}:R>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                )
+                state["banner_date"] = today
+            else:
+                content = ""
 
             send_discord(content, embeds)
             time.sleep(1)
 
         for a in new_articles:
             seen.add(a["link"])
-        save_seen(seen)
+        save_state(state)
     else:
         print(f"[*] Không có tin tức mới nào ({len(seen)} tin đã theo dõi). Giữ im lặng.")
 
