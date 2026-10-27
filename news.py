@@ -5,6 +5,7 @@ import html
 import json
 import time
 import email.utils
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import requests
@@ -226,7 +227,10 @@ def create_article_embed(art, now):
         "timestamp": embed_timestamp
     }
     if art.get("image"):
-        embed["image"] = {"url": art["image"]}
+        img_url = art["image"]
+        if "vnecdn.net" in img_url:
+            img_url = f"https://wsrv.nl/?url={urllib.parse.quote(img_url)}"
+        embed["image"] = {"url": img_url}
     return embed
 
 def send_discord(content, embeds):
