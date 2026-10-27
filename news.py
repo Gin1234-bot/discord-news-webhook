@@ -4,6 +4,7 @@ import re
 import html
 import json
 import time
+import email.utils
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import requests
@@ -171,19 +172,58 @@ def save_seen(seen_set):
     except Exception as e:
         print(f"[!] Lỗi lưu state: {e}")
 
+def parse_pub_date(pub_date_str):
+    if not pub_date_str:
+        return None
+    pub_date_str = pub_date_str.strip()
+    try:
+        dt = email.utils.parsedate_to_datetime(pub_date_str)
+        return dt.astimezone(TZ)
+    except Exception:
+        pass
+
+    formats = [
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%a, %d %b %Y %H:%M:%S %z",
+        "%a, %d %b %Y %H:%M:%S GMT%z",
+    ]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(pub_date_str, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=TZ)
+            else:
+                dt = dt.astimezone(TZ)
+            return dt
+        except Exception:
+            pass
+    return None
+
 def create_article_embed(art, now):
+    dt = parse_pub_date(art.get("pub_date"))
+    if dt:
+        time_display = f"⏰ **Đăng báo lúc:** `{dt.strftime('%H:%M - %d/%m/%Y')}` (<t:{int(dt.timestamp())}:R>)"
+        embed_timestamp = dt.isoformat()
+    else:
+        time_display = f"⏰ **Ghi nhận lúc:** `{now.strftime('%H:%M - %d/%m/%Y')}`"
+        embed_timestamp = now.isoformat()
+
     embed = {
         "title": f"📰 {art['title']}",
         "url": art["link"],
         "description": (
             f"{art['summary']}\n\n"
+            f"{time_display}\n"
             f"[👉 **Bấm vào đây để đọc bài viết chi tiết tại {art['source']}**]({art['link']})"
         ),
         "color": art["color"],
         "footer": {
-            "text": f"{art['source']} • Cập nhật tự động 24/7"
+            "text": f"{art['source']} • Tin Thời Sự 24/7"
         },
-        "timestamp": now.isoformat()
+        "timestamp": embed_timestamp
     }
     if art.get("image"):
         embed["image"] = {"url": art["image"]}
