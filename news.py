@@ -3,6 +3,7 @@ import os
 import re
 import html
 import json
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import requests
@@ -33,15 +34,33 @@ HEADERS = {
 FEEDS = [
     {
         "source": "VnExpress",
-        "category": "Thời sự 24h",
+        "category": "Tin Mới Nhất",
         "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
         "color": 0x9B59B6 # Tím đỏ VnExpress
     },
     {
+        "source": "VnExpress",
+        "category": "Thời sự",
+        "url": "https://vnexpress.net/rss/thoi-su.rss",
+        "color": 0x9B59B6
+    },
+    {
         "source": "Báo Tuổi Trẻ",
-        "category": "Thời sự 24h",
+        "category": "Tin Mới Nhất",
         "url": "https://tuoitre.vn/rss/tin-moi-nhat.rss",
         "color": 0x2980B9 # Xanh dương Tuổi Trẻ
+    },
+    {
+        "source": "Báo Tuổi Trẻ",
+        "category": "Thời sự",
+        "url": "https://tuoitre.vn/rss/thoi-su.rss",
+        "color": 0x2980B9
+    },
+    {
+        "source": "Báo Thanh Niên",
+        "category": "Thời sự 24h",
+        "url": "https://thanhnien.vn/rss/home.rss",
+        "color": 0x27AE60 # Xanh lá Thanh Niên
     }
 ]
 
@@ -239,18 +258,22 @@ def main(mode="check"):
     new_articles = [a for a in all_news if a["link"] not in seen]
 
     if new_articles:
-        print(f"[!] PHÁT HIỆN {len(new_articles)} BÀI BÁO THỜI SỰ MỚI TINH!")
-        # Giới hạn tối đa 3 bài/lần quét để không flood kênh
-        selected = new_articles[:3]
-        embeds = [create_article_embed(a, now) for a in selected]
+        print(f"[!] PHÁT HIỆN {len(new_articles)} BÀI BÁO THỜI SỰ MỚI TINH! ĐĂNG TOÀN BỘ NGAY LẬP TỨC...")
+        # Đăng toàn bộ không giới hạn, chia thành các đợt tối đa 5 embeds/tin nhắn để không vượt trần ký tự Discord
+        chunk_size = 5
+        for i in range(0, len(new_articles), chunk_size):
+            batch = new_articles[i:i + chunk_size]
+            embeds = [create_article_embed(a, now) for a in batch]
 
-        content = (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔴 **BẢN TIN THỜI SỰ NÓNG 24H • CẬP NHẬT MỚI**\n"
-            f"⏰ *Ghi nhận lúc: {time_str} ({thu}, {date_str})* • <t:{ts}:R>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        send_discord(content, embeds)
+            content = (
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔴 **BẢN TIN THỜI SỰ NÓNG 24H • CẬP NHẬT MỚI ({len(new_articles)} TIN)**\n"
+                f"⏰ *Ghi nhận lúc: {time_str} ({thu}, {date_str})* • <t:{ts}:R>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            ) if i == 0 else ""
+
+            send_discord(content, embeds)
+            time.sleep(1)
 
         for a in new_articles:
             seen.add(a["link"])
